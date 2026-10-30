@@ -1,4 +1,4 @@
-import http from 'http';
+import http from 'node:http';
 import {
   Client,
   EmbedBuilder,
@@ -31,7 +31,7 @@ if (!TOKEN) {
   process.exit(1);
 }
 
-onst WELCOME_CHANNEL_ID = "1565748965385830420";
+const WELCOME_CHANNEL_ID = "1565748965385830420";
 const GANG_LIST_CHANNEL_ID = "1565748999833526412";
 const COMMANDS_INFO_CHANNEL_ID = "1565751983854456904";
 const WARN_CHANNEL_ID = "1565749002522075136";
@@ -46,6 +46,13 @@ const ONTSLAGEN_CHANNEL_ID = "1565752732659228733";
 const TICKET_PANEL_CHANNEL_ID = "1565748970750353479";
 const TICKET_SUPPORT_ROLE_ID = "1565752859746898112";
 const TICKET_TRANSCRIPT_CHANNEL_ID = "1565748972012839083";
+
+// ===== Warn roles =====
+const WARN_ROLE_LEVEL1 = "1565759026615029790";
+const WARN_ROLE_LEVEL2 = "1565758983510302850";
+
+// ===== Overige settings =====
+const ROLE_CHANGE_DEBOUNCE_MS = 2000;
 
 const TICKET_CATEGORIES = {
   application: {
@@ -64,6 +71,7 @@ const TICKET_CATEGORIES = {
     color: 0xe91e63,
   },
 };
+
 // ===== EXACTE SOLLICITATIE VRAGEN (4 KOPJES) =====
 const APPLICATION_PARTS = {
   part1: {
@@ -220,7 +228,7 @@ const client = new Client({
 });
 
 let messageId = null;
-const activeApplications = new Map(); // Slaat antwoorden op tijdens het invullen
+const activeApplications = new Map();
 
 // ===== STATUS SYSTEEM =====
 let statusToggle = false;
@@ -320,7 +328,7 @@ async function sendWelcomeMessage(member) {
   } catch (error) { console.error("Welcome message error:", error); }
 }
 
-async function sendPromoEmbed(guild, user, oldRank, newRank, reason, steps) {
+async function sendPromoEmbed(guild, user, oldRank, newRank, reason) {
   const channel = await client.channels.fetch(PROMO_CHANNEL_ID);
   if (!channel || !channel.isTextBased()) return;
   const embed = new EmbedBuilder().setTitle("📈 PROMOTIE").setDescription(`${memberLink(user.id, user.displayName)}`)
@@ -333,7 +341,7 @@ async function sendPromoEmbed(guild, user, oldRank, newRank, reason, steps) {
   await channel.send({ embeds: [embed] });
 }
 
-async function sendDemoteEmbed(guild, user, oldRank, newRank, reason, steps) {
+async function sendDemoteEmbed(guild, user, oldRank, newRank, reason) {
   const channel = await client.channels.fetch(DEMOTE_CHANNEL_ID);
   if (!channel || !channel.isTextBased()) return;
   const embed = new EmbedBuilder().setTitle("📉 DEMOTIE").setDescription(`${memberLink(user.id, user.displayName)}`)
