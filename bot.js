@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { Octokit } from "@octokit/rest";
 import {
   Client,
   EmbedBuilder,
@@ -51,6 +52,12 @@ const TICKET_TRANSCRIPT_CHANNEL_ID = "1565748972012839083";
 // ===== Warn roles =====
 const WARN_ROLE_LEVEL1 = "1565759026615029790";
 const WARN_ROLE_LEVEL2 = "1565758983510302850";
+
+// ===== Blacklist settings =====
+const BLACKLIST_CHANNEL_ID = "1565804969188266076";
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+let GIST_ID = process.env.GIST_ID || null;
+const GIST_FILENAME = "kurokai.json";
 
 // ===== Overige settings =====
 const ROLE_CHANGE_DEBOUNCE_MS = 2000;
@@ -483,6 +490,270 @@ async function sendSollicitatieFormulier(interaction) {
   await interaction.channel.send({ embeds: [embed] });
 }
 
+// ========================================
+// 🚫 BLACKLIST SYSTEEM (GitHub Gist DB)
+// ========================================
+
+const octokit = GITHUB_TOKEN ? new Octokit({ auth: GITHUB_TOKEN }) : null;
+
+let blacklistCache = {};
+let blacklistMessageId = null;
+let blacklistLoaded = false;
+
+async function loadBlacklist() {
+  if (!octokit) {
+    console.warn("⚠️ Geen GITHUB_TOKEN — blacklist werkt niet persistent.");
+    blacklistLoaded = true;
+    return;
+  }
+
+  try {
+    if (!GIST_ID) {
+      const { data } = await octokit.gists.create({
+        description: "Kurokai Bot — Blacklist Database",
+        public: false,
+        files: { [GIST_FILENAME]: { content: JSON.stringify({}, null, 2) } },
+      });
+      GIST_ID = data.id;
+      console.log(`⚠️ Nieuwe Gist aangemaakt. Zet dit in je env: GIST_ID=${GIST_ID}`);
+      blacklistCache = {};
+      blacklistLoaded = true;
+      return;
+    }
+
+    const { data } = await octokit.gists.get({ gist_id: GIST_ID });
+    const content = data.files[GIST_FILENAME]?.content || "{}";
+    blacklistCache = JSON.parse(content);
+
+    const now = Date.now();
+    let changed = false;
+    for (const [id, entry] of Object.entries(blacklistCache)) {
+      if (entry.expiresAt && entry.expiresAt < now) {
+        delete blacklistCache[id];
+        changed = true;
+      }
+    }
+    if (changed) await saveBlacklist();
+    blacklistLoaded = true;
+    console.log(`✅ Blacklist geladen: ${Object.keys(blacklistCache).length} entries`);
+  } catch (err) {
+    console.error("❌ Blacklist load error:", err.message);
+    blacklistLoaded = true;
+  }
+}
+
+async function saveBlacklist() {
+  if (!octokit || !GIST_ID) return false;
+  try {
+    await octokit.gists.update({
+      gist_id: GIST_ID,
+      files: {
+        [GIST_FILENAME]: {
+          content: JSON.stringify(blacklistCache, null, 2),
+        },
+      },
+    });
+    return true;
+  } catch (err) {
+    console.error("❌ Blacklist save error:", err.message);
+    return false;
+  }
+}
+
+function isBlacklisted(userId) {
+  const entry = blacklistCache[userId];
+  if (!entry) return false;
+  if (entry.expiresAt && entry.expiresAt < Date.now()) {
+    delete blacklistCache[userId];
+    saveBlacklist().catch(() => {});
+    return false;
+  }
+  return true;
+}
+
+function parseDuration(input) {
+  if (!input) return null;
+  const match = input.toLowerCase().trim().match(/^(\d+)\s*([smhdw])$/);
+  if (!match) return null;
+  const value = parseInt(match[1], 10);
+  const unit = match[2];
+  const multipliers = { s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000, w: 604_800_000 };
+  return value * multipliers[unit];
+}
+
+function formatDuration(ms) {
+  if (!ms) return "Permanent";
+  const totalSec = Math.floor(ms / 1000);
+  const d = Math.floor(totalSec / 86400);
+  const h = Math.floor((totalSec % 86400) / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const parts = [];
+  if (d > 0) parts.push(`${d}d`);
+  if (h > 0) parts.push(`${h}u`);
+  if (m > 0) parts.push(`${m}m`);
+  return parts.join(" ") || "< 1m";
+}
+
+function formatBlacklistExpiry(entry) {
+  if (!entry.expiresAt) return "Permanent";
+  const remaining = entry.expiresAt - Date.now();
+  if (remaining <= 0) return "Verlopen";
+  const date = new Date(entry.expiresAt).toLocaleDateString('nl-NL', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  return `${formatDuration(remaining)} (${date})`;
+}
+
+async function buildBlacklistEmbed() {
+  const entries = Object.entries(blacklistCache).filter(([_, e]) => !e.expiresAt || e.expiresAt > Date.now());
+
+  entries.sort((a, b) => {
+    const aPerm = !a[1].expiresAt;
+    const bPerm = !b[1].expiresAt;
+    if (aPerm && !bPerm) return -1;
+    if (!aPerm && bPerm) return 1;
+    if (aPerm && bPerm) return (a[1].addedAt || 0) - (b[1].addedAt || 0);
+    return a[1].expiresAt - b[1].expiresAt;
+  });
+
+  let body = "";
+  if (entries.length === 0) {
+    body = "> Geen geblackliste leden op dit moment.";
+  } else {
+    for (const [userId, entry] of entries) {
+      const expiry = formatBlacklistExpiry(entry);
+      const reason = entry.reason || "Geen reden";
+      body += `**🚫 ${entry.username || "Onbekend"}** (<@${userId}>)\n`;
+      body += `➤ Verloopt: **${expiry}**\n`;
+      body += `➤ Reden: ${reason}\n\n`;
+    }
+  }
+
+  const description = `**Totaal: ${entries.length} geblacklist**\n\n${body}`;
+  return new EmbedBuilder()
+    .setTitle("🚫 Kurokai Blacklist")
+    .setColor(0x8B0000)
+    .setDescription(description.slice(0, 4096))
+    .setFooter({ text: FOOTER_TEXT })
+    .setTimestamp();
+}
+
+async function updateBlacklistEmbed() {
+  try {
+    const channel = await client.channels.fetch(BLACKLIST_CHANNEL_ID);
+    if (!channel || !channel.isTextBased()) return;
+    const embed = await buildBlacklistEmbed();
+    const payload = { embeds: [embed], allowedMentions: { parse: [] } };
+
+    if (blacklistMessageId) {
+      try {
+        const msg = await channel.messages.fetch(blacklistMessageId);
+        await msg.edit(payload);
+        return;
+      } catch { blacklistMessageId = null; }
+    }
+
+    try {
+      const fetched = await channel.messages.fetch({ limit: 50 });
+      const botMsgs = fetched.filter(m => m.author.id === client.user.id);
+      for (const m of botMsgs.values()) await m.delete().catch(() => {});
+    } catch {}
+
+    const sent = await channel.send(payload);
+    blacklistMessageId = sent.id;
+  } catch (err) {
+    console.error("Blacklist embed error:", err.message);
+  }
+}
+
+async function addToBlacklist(userId, username, durationMs, reason, addedBy) {
+  blacklistCache[userId] = {
+    userId,
+    username,
+    reason: reason || "Geen reden",
+    addedBy,
+    addedAt: Date.now(),
+    expiresAt: durationMs ? Date.now() + durationMs : null,
+  };
+  const ok = await saveBlacklist();
+  await updateBlacklistEmbed();
+  return ok;
+}
+
+async function removeFromBlacklist(userId) {
+  if (!blacklistCache[userId]) return false;
+  delete blacklistCache[userId];
+  await saveBlacklist();
+  await updateBlacklistEmbed();
+  return true;
+}
+
+function startBlacklistInterval() {
+  setInterval(async () => {
+    let changed = false;
+    const now = Date.now();
+    for (const [id, entry] of Object.entries(blacklistCache)) {
+      if (entry.expiresAt && entry.expiresAt < now) {
+        delete blacklistCache[id];
+        changed = true;
+      }
+    }
+    if (changed) await saveBlacklist();
+    await updateBlacklistEmbed();
+  }, 60_000);
+}
+
+async function handleBlacklist(interaction) {
+  if (!hasModRole(interaction.member)) {
+    return interaction.reply({ content: "❌ Je hebt niet de juiste rol!", flags: MessageFlags.Ephemeral });
+  }
+
+  const targetUser = interaction.options.getUser("user");
+  const reason = interaction.options.getString("reason");
+  const durationInput = interaction.options.getString("duur");
+
+  if (targetUser.bot) {
+    return interaction.reply({ content: "❌ Je kan geen bot blacklisten.", flags: MessageFlags.Ephemeral });
+  }
+
+  if (isBlacklisted(targetUser.id)) {
+    return interaction.reply({ content: `❌ ${targetUser.username} staat al op de blacklist.`, flags: MessageFlags.Ephemeral });
+  }
+
+  let durationMs = null;
+  if (durationInput) {
+    durationMs = parseDuration(durationInput);
+    if (!durationMs) {
+      return interaction.reply({ content: "❌ Ongeldige duur. Gebruik bijv. `7d`, `12h`, `30m` of laat leeg voor permanent.", flags: MessageFlags.Ephemeral });
+    }
+  }
+
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const ok = await addToBlacklist(targetUser.id, targetUser.username, durationMs, reason, interaction.user.id);
+
+  if (ok) {
+    const durLabel = durationMs ? formatDuration(durationMs) : "Permanent";
+    await interaction.editReply({ content: `✅ ${targetUser.username} is geblacklist voor **${durLabel}**.\nReden: ${reason}` });
+  } else {
+    await interaction.editReply({ content: "⚠️ Geblacklist in geheugen, maar opslaan naar Gist mislukt." });
+  }
+}
+
+async function handleUnblacklist(interaction) {
+  if (!hasModRole(interaction.member)) {
+    return interaction.reply({ content: "❌ Je hebt niet de juiste rol!", flags: MessageFlags.Ephemeral });
+  }
+
+  const targetUser = interaction.options.getUser("user");
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  const ok = await removeFromBlacklist(targetUser.id);
+  if (ok) {
+    await interaction.editReply({ content: `✅ ${targetUser.username} is van de blacklist gehaald.` });
+  } else {
+    await interaction.editReply({ content: `❌ ${targetUser.username} staat niet op de blacklist.` });
+  }
+}
+
 // ===== Mute system =====
 const activeMutes = new Map();
 
@@ -663,8 +934,7 @@ async function closeTicket(channel, closerId) {
     const { html, messageCount } = await makeTranscript(channel);
     const buffer = Buffer.from(html, 'utf-8');
     const attachment = new AttachmentBuilder(buffer, { name: `transcript-${channel.name}.html` });
-    
-    // Verstuur naar transcript kanaal
+
     const transcriptChannel = await client.channels.fetch(TICKET_TRANSCRIPT_CHANNEL_ID);
     const cat = TICKET_CATEGORIES[ticket.category];
     const embed = new EmbedBuilder()
@@ -681,17 +951,16 @@ async function closeTicket(channel, closerId) {
       .setTimestamp();
     await transcriptChannel.send({ embeds: [embed], files: [attachment] });
 
-    // Verstuur DM naar klant
     try {
       const user = await client.users.fetch(ticket.userId);
-      await user.send({ 
-        content: `🔒 Je ticket **#${channel.name}** is gesloten. Hieronder vind je het transcript.`, 
-        files: [attachment] 
+      await user.send({
+        content: `🔒 Je ticket **#${channel.name}** is gesloten. Hieronder vind je het transcript.`,
+        files: [attachment]
       });
     } catch (e) { console.log("Kon geen DM sturen naar user."); }
 
   } catch (e) { console.error('Transcript error:', e.message); }
-  
+
   activeTickets.delete(channel.id);
   activeApplications.delete(channel.id);
   setTimeout(async () => { try { await channel.delete('Ticket gesloten'); } catch (e) {} }, 5000);
@@ -733,7 +1002,7 @@ async function setupTicketPanel() {
   } catch (e) { console.error('Ticket panel error:', e.message); }
 }
 
-// ===== NIEUW SOLLICITATIE SYSTEEM =====
+// ===== SOLLICITATIE SYSTEEM =====
 function buildApplicationStartEmbed() {
   return new EmbedBuilder()
     .setTitle('📝 Sollicitatie Formulier')
@@ -752,7 +1021,7 @@ function buildApplicationStartEmbed() {
 
 function buildApplicationButtons(channelId) {
   const data = activeApplications.get(channelId) || { part1: false, part2: false, part3: false };
-  
+
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(`app_part1_${channelId}`)
@@ -775,7 +1044,7 @@ function buildApplicationButtons(channelId) {
 function buildApplicationModal(partKey) {
   const part = APPLICATION_PARTS[partKey];
   const modal = new ModalBuilder().setCustomId(`app_modal_${partKey}`).setTitle(part.title);
-  
+
   for (const q of part.questions) {
     const input = new TextInputBuilder()
       .setCustomId(q.id)
@@ -824,13 +1093,12 @@ function buildRankSelectMenu(userId) {
   );
 }
 
-// ===== NIEUW: COMMANDS OVERZICHT =====
+// ===== COMMANDS OVERZICHT =====
 async function setupCommandsEmbed() {
   try {
     const channel = await client.channels.fetch(COMMANDS_INFO_CHANNEL_ID);
     if (!channel || !channel.isTextBased()) return;
 
-    // Verwijder oude bot berichten in het kanaal
     try {
       const fetched = await channel.messages.fetch({ limit: 50 });
       const botMsgs = fetched.filter(m => m.author.id === client.user.id);
@@ -842,37 +1110,39 @@ async function setupCommandsEmbed() {
       .setColor(0x2b2b2b)
       .setDescription('Hieronder vind je een overzicht van alle beschikbare commands voor de Kurokai bot.')
       .addFields(
-        { 
-          name: '🛠️ Algemeen & Beheer', 
-          value: 
+        {
+          name: '🛠️ Algemeen & Beheer',
+          value:
             '**`/refresh`** — Refresh de gang ledenlijst\n' +
             '**`/clear <aantal>`** — Verwijder berichten in het kanaal\n' +
             '**`/afwezig <reden> <van> <tot>`** — Meld je afwezigheid\n' +
-            '**`/mute <user> <minuten> [reden]`** — Mute een lid (typetekst & spraak)\n' +
-            '**`/unmute <user> [reden]`** — Unmute een lid', 
-          inline: false 
+            '**`/mute <user> <minuten> [reden]`** — Mute een lid\n' +
+            '**`/unmute <user> [reden]`** — Unmute een lid',
+          inline: false
         },
-        { 
-          name: '👑 Gang Beheer', 
-          value: 
+        {
+          name: '👑 Gang Beheer',
+          value:
             '**`/promo <stappen> <user> <reden>`** — Promoveer een lid\n' +
             '**`/demote <stappen> <user> <reden>`** — Demoveer een lid\n' +
             '**`/aangenomen <user> <rang> <reden>`** — Neem een nieuw lid aan\n' +
             '**`/ontslagen <user> <reden>`** — Ontsla een lid\n' +
-            '**`/warn <nummer> <user> <reden>`** — Geef een waarschuwing (1 of 2)\n' +
-            '**`/removewarn <nummer> <user> <reden>`** — Trek een waarschuwing in', 
-          inline: false 
+            '**`/warn <nummer> <user> <reden>`** — Geef een waarschuwing\n' +
+            '**`/removewarn <nummer> <user> <reden>`** — Trek een waarschuwing in\n' +
+            '**`/blacklist <user> <reden> [duur]`** — Blacklist een gebruiker (leeg = permanent)\n' +
+            '**`/unblacklist <user>`** — Haal van de blacklist',
+          inline: false
         },
-        { 
-          name: '🎫 Ticket Beheer', 
-          value: 
+        {
+          name: '🎫 Ticket Beheer',
+          value:
             '**`/ticketpanel`** — Plaats het ticket paneel (Mods)\n' +
             '**`/add <user>`** — Voeg een user toe aan ticket\n' +
             '**`/remove <user>`** — Verwijder een user uit ticket\n' +
             '**`/close`** — Sluit het ticket\n' +
             '**`/rename <naam>`** — Hernoem het ticket kanaal\n' +
-            '**`/sollicitatieformulier`** — Stuur het standaard sollicitatieformulier', 
-          inline: false 
+            '**`/sollicitatieformulier`** — Stuur het sollicitatieformulier',
+          inline: false
         }
       )
       .setFooter({ text: FOOTER_TEXT, iconURL: getServerIcon(channel.guild) })
@@ -895,10 +1165,7 @@ async function registerCommands() {
     new SlashCommandBuilder().setName("removewarn").setDescription("Trek waarschuwing in").addIntegerOption(o => o.setName("number").setDescription("1 of 2").setRequired(true).setMinValue(1).setMaxValue(2)).addUserOption(o => o.setName("user").setDescription("Lid").setRequired(true)).addStringOption(o => o.setName("reason").setDescription("Reden").setRequired(true)),
     new SlashCommandBuilder().setName("aangenomen").setDescription("Neem een nieuw lid aan").addUserOption(o => o.setName("user").setDescription("Lid").setRequired(true)).addStringOption(o => o.setName("rank").setDescription("Rang").setRequired(true).addChoices(...ranks.map(r => ({ name: r.name, value: r.name })))).addStringOption(o => o.setName("reason").setDescription("Reden").setRequired(true)),
     new SlashCommandBuilder().setName("ontslagen").setDescription("Ontsla een lid").addUserOption(o => o.setName("user").setDescription("Lid").setRequired(true)).addStringOption(o => o.setName("reason").setDescription("Reden").setRequired(true)),
-    
-    // Aangepast: /afwezig accepteert nu alle tekst voor from/til
-    new SlashCommandBuilder().setName("afwezig").setDescription("Meld afwezigheid").addStringOption(o => o.setName("reason").setDescription("Reden").setRequired(true)).addStringOption(o => o.setName("from").setDescription("Vanaf (bijv. 12/10/2024 of morgen)").setRequired(true)).addStringOption(o => o.setName("til").setDescription("Tot (bijv. 15/10/2024 of over 3 dagen)").setRequired(true)),
-    
+    new SlashCommandBuilder().setName("afwezig").setDescription("Meld afwezigheid").addStringOption(o => o.setName("reason").setDescription("Reden").setRequired(true)).addStringOption(o => o.setName("from").setDescription("Vanaf").setRequired(true)).addStringOption(o => o.setName("til").setDescription("Tot").setRequired(true)),
     new SlashCommandBuilder().setName("clear").setDescription("Verwijder berichten").addStringOption(o => o.setName("number").setDescription("Aantal of 'all'").setRequired(true)),
     new SlashCommandBuilder().setName("mute").setDescription("Mute een lid").addUserOption(o => o.setName("user").setDescription("Lid").setRequired(true)).addIntegerOption(o => o.setName("minutes").setDescription("Minuten").setRequired(true).setMinValue(1).setMaxValue(1440)).addStringOption(o => o.setName("reason").setDescription("Reden").setRequired(false)),
     new SlashCommandBuilder().setName("unmute").setDescription("Unmute een lid").addUserOption(o => o.setName("user").setDescription("Lid").setRequired(true)).addStringOption(o => o.setName("reason").setDescription("Reden").setRequired(false)),
@@ -908,6 +1175,16 @@ async function registerCommands() {
     new SlashCommandBuilder().setName("close").setDescription("Sluit dit ticket"),
     new SlashCommandBuilder().setName("rename").setDescription("Hernoem dit ticket").addStringOption(o => o.setName("name").setDescription("Nieuwe naam").setRequired(true)),
     new SlashCommandBuilder().setName("ticketpanel").setDescription("Plaats het ticket panel (alleen mods)"),
+    new SlashCommandBuilder()
+      .setName("blacklist")
+      .setDescription("Blacklist een gebruiker (zonder duur = permanent)")
+      .addUserOption(o => o.setName("user").setDescription("Gebruiker").setRequired(true))
+      .addStringOption(o => o.setName("reason").setDescription("Reden van blacklist").setRequired(true))
+      .addStringOption(o => o.setName("duur").setDescription("Duur: bijv. 7d, 12h, 30m (leeg = permanent)").setRequired(false)),
+    new SlashCommandBuilder()
+      .setName("unblacklist")
+      .setDescription("Haal een gebruiker van de blacklist")
+      .addUserOption(o => o.setName("user").setDescription("Gebruiker").setRequired(true)),
   ].map(cmd => cmd.toJSON());
 
   try {
@@ -1000,6 +1277,11 @@ async function handleAangenomen(interaction) {
   const rankName = interaction.options.getString("rank");
   const reason = interaction.options.getString("reason");
   if (!hasAdminRole(interaction.member)) return interaction.reply({ content: "❌ Je hebt niet de juiste rol!", flags: MessageFlags.Ephemeral });
+
+  if (isBlacklisted(targetUser.id)) {
+    return interaction.reply({ content: `❌ ${targetUser.username} staat op de blacklist en kan niet aangenomen worden.`, flags: MessageFlags.Ephemeral });
+  }
+
   const rank = ranks.find(r => r.name === rankName);
   const targetMember = await interaction.guild.members.fetch(targetUser.id);
   try {
@@ -1009,7 +1291,7 @@ async function handleAangenomen(interaction) {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     await sendAangenomenEmbed(interaction.guild, targetMember, rank.name, reason);
     await safeUpdateList();
-    
+
     try {
       await targetUser.send({ content: `✅ Gefeliciteerd! Je bent aangenomen bij **Kurokai** met de rang **${rank.name}**.\nReden: ${reason}` });
     } catch (err) {}
@@ -1029,7 +1311,7 @@ async function handleOntslagen(interaction) {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     await sendOntslagenEmbed(targetMember, reason);
     await safeUpdateList();
-    
+
     try {
       await targetUser.send({ content: `❌ Je bent ontslagen bij **Kurokai**.\nReden: ${reason}` });
     } catch (err) {}
@@ -1043,7 +1325,7 @@ async function handleAfwezigheid(interaction) {
   const reason = interaction.options.getString("reason");
   const fromDate = interaction.options.getString("from");
   const tilDate = interaction.options.getString("til");
-  
+
   await sendAfwezigheidEmbed(interaction.member, reason, fromDate, tilDate);
   await interaction.editReply({ content: `✅ Afwezigheid gemeld!` });
 }
@@ -1173,18 +1455,18 @@ async function handleTicketCategorySelect(interaction) {
     );
 
     if (cat.isApplication) {
-      activeApplications.set(ticketChannel.id, { 
-        part1: false, part2: false, part3: false, 
-        answers: {} 
+      activeApplications.set(ticketChannel.id, {
+        part1: false, part2: false, part3: false,
+        answers: {}
       });
-      
+
       const startEmbed = buildApplicationStartEmbed();
       const appButtons = buildApplicationButtons(ticketChannel.id);
-      
-      await ticketChannel.send({ 
-        content: `<@${interaction.user.id}> <@&${TICKET_SUPPORT_ROLE_ID}>`, 
-        embeds: [embed, startEmbed], 
-        components: [appButtons, closeRow] 
+
+      await ticketChannel.send({
+        content: `<@${interaction.user.id}> <@&${TICKET_SUPPORT_ROLE_ID}>`,
+        embeds: [embed, startEmbed],
+        components: [appButtons, closeRow]
       });
     } else {
       await ticketChannel.send({ content: `<@${interaction.user.id}> <@&${TICKET_SUPPORT_ROLE_ID}>`, embeds: [embed], components: [closeRow] });
@@ -1211,10 +1493,10 @@ async function handleApplicationPartOpen(interaction, partKey) {
 
 async function handleApplicationModalSubmit(interaction, partKey) {
   await interaction.deferReply({ ephemeral: true });
-  
+
   const channelId = interaction.channelId;
   const data = activeApplications.get(channelId);
-  
+
   if (!data) {
     return interaction.editReply({ content: '❌ Sollicitatie data niet gevonden. Probeer opnieuw.' });
   }
@@ -1244,13 +1526,13 @@ async function handleApplicationModalSubmit(interaction, partKey) {
   if (data.part1 && data.part2 && data.part3) {
     const finalEmbed = buildFinalApplicationEmbed(data.userId, answers);
     const adminButtons = buildAdminReviewButtons(channelId, data.userId);
-    
-    await interaction.channel.send({ 
-      content: `<@&${TICKET_SUPPORT_ROLE_ID}> 📢 **Een nieuwe sollicitatie is volledig ingevuld!**`, 
+
+    await interaction.channel.send({
+      content: `<@&${TICKET_SUPPORT_ROLE_ID}> 📢 **Een nieuwe sollicitatie is volledig ingevuld!**`,
       embeds: [finalEmbed],
       components: [adminButtons]
     });
-    
+
     data.completed = true;
     activeApplications.set(channelId, data);
   }
@@ -1258,39 +1540,43 @@ async function handleApplicationModalSubmit(interaction, partKey) {
 
 async function handleAppAccept(interaction, userId) {
   if (!hasAdminRole(interaction.member)) return interaction.reply({ content: "❌ Je hebt niet de juiste rol!", ephemeral: true });
-  
-  await interaction.reply({ 
-    content: "Kies de rang voor deze gebruiker in het dropdown menu hieronder:", 
+
+  await interaction.reply({
+    content: "Kies de rang voor deze gebruiker in het dropdown menu hieronder:",
     components: [buildRankSelectMenu(userId)],
-    ephemeral: true 
+    ephemeral: true
   });
 }
 
 async function handleAppReject(interaction, userId) {
   if (!hasAdminRole(interaction.member)) return interaction.reply({ content: "❌ Je hebt niet de juiste rol!", ephemeral: true });
-  
+
   await interaction.update({ components: [] });
-  
+
   const targetUser = await client.users.fetch(userId).catch(() => null);
-  
+
   if (targetUser) {
     await sendOntslagenEmbed(targetUser, "Sollicitatie afgewezen");
-    
+
     try {
       await targetUser.send({ content: `❌ Je sollicitatie bij **Kurokai** is helaas afgewezen.\nReden: Sollicitatie afgewezen` });
     } catch (err) {}
   }
-  
+
   await interaction.channel.send({ content: `❌ Sollicitatie van <@${userId}> is afgewezen door <@${interaction.user.id}>.` });
 }
 
 async function handleAppRankSelect(interaction, userId) {
   if (!hasAdminRole(interaction.member)) return interaction.reply({ content: "❌ Je hebt niet de juiste rol!", ephemeral: true });
-  
+
+  if (isBlacklisted(userId)) {
+    return interaction.reply({ content: `❌ <@${userId}> staat op de blacklist en kan niet aangenomen worden.`, ephemeral: true });
+  }
+
   await interaction.deferUpdate();
   const roleId = interaction.values[0];
   const rank = ranks.find(r => r.roleId === roleId);
-  
+
   if (!rank) return;
 
   const reason = "Sollicitatie/Overstap";
@@ -1305,14 +1591,14 @@ async function handleAppRankSelect(interaction, userId) {
     await removeAllGangRoles(targetMember);
     await targetMember.roles.add(interaction.guild.roles.cache.get(rank.roleId));
     await targetMember.roles.add(interaction.guild.roles.cache.get(LID_ROLE_ID));
-    
+
     await sendAangenomenEmbed(interaction.guild, targetMember, rank.name, reason);
-    
+
     await safeUpdateList();
 
     try {
-      await targetUser.send({ 
-        content: `✅ Gefeliciteerd! Je bent aangenomen bij **Kurokai** met de rang **${rank.name}**.\nReden: ${reason}` 
+      await targetUser.send({
+        content: `✅ Gefeliciteerd! Je bent aangenomen bij **Kurokai** met de rang **${rank.name}**.\nReden: ${reason}`
       });
     } catch (err) {}
 
@@ -1420,12 +1706,16 @@ client.once("ready", async () => {
       }
     }
   } catch (err) { console.error("Ready error:", err); }
-  
+
   await registerCommands();
   await safeUpdateList();
   await setupTicketPanel();
   await setupCommandsEmbed();
-  
+
+  await loadBlacklist();
+  await updateBlacklistEmbed();
+  startBlacklistInterval();
+
   startStatusInterval();
 });
 
@@ -1482,7 +1772,7 @@ client.on("interactionCreate", async (interaction) => {
   }
 
   if (interaction.isModalSubmit() && interaction.customId.startsWith('app_modal_')) {
-    const partKey = interaction.customId.replace('app_modal_', ''); 
+    const partKey = interaction.customId.replace('app_modal_', '');
     return await handleApplicationModalSubmit(interaction, partKey);
   }
 
@@ -1505,6 +1795,8 @@ client.on("interactionCreate", async (interaction) => {
     else if (name === "close") await handleClose(interaction);
     else if (name === "rename") await handleRename(interaction);
     else if (name === "ticketpanel") await handleTicketPanel(interaction);
+    else if (name === "blacklist") await handleBlacklist(interaction);
+    else if (name === "unblacklist") await handleUnblacklist(interaction);
     return;
   }
 });
