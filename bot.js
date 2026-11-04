@@ -32,6 +32,7 @@ if (!TOKEN) {
 }
 
 const WELCOME_CHANNEL_ID = "1565748965385830420";
+const LEAVE_CHANNEL_ID = "1566191799423336499";
 const GANG_LIST_CHANNEL_ID = "1565748999833526412";
 const COMMANDS_INFO_CHANNEL_ID = "1565751983854456904";
 const WARN_CHANNEL_ID = "1565749002522075136";
@@ -72,44 +73,33 @@ const TICKET_CATEGORIES = {
   },
 };
 
-// ===== EXACTE SOLLICITATIE VRAGEN (4 KOPJES) =====
+// ===== SIMPELERE SOLLICITATIE VRAGEN (3 KOPJES, FIVEM-FRIENDLY) =====
 const APPLICATION_PARTS = {
   part1: {
-    title: "01 — Persoonlijke gegevens",
+    title: "01 — Wie ben je?",
     emoji: "👤",
     questions: [
       { id: "naam", label: "Naam", placeholder: "Vul je naam in", style: TextInputStyle.Short, max: 100 },
       { id: "leeftijd", label: "Leeftijd", placeholder: "Vul je leeftijd in", style: TextInputStyle.Short, max: 10 },
       { id: "discord", label: "Discord", placeholder: "Vul je Discord tag in", style: TextInputStyle.Short, max: 100 },
-      { id: "ic_naam", label: "IC-naam", placeholder: "Vul je IC-naam in", style: TextInputStyle.Short, max: 100 },
-      { id: "ic_leeftijd", label: "IC-leeftijd", placeholder: "Vul je IC-leeftijd in", style: TextInputStyle.Short, max: 10 }
+      { id: "ic_naam", label: "IC-naam", placeholder: "Vul je IC-naam in", style: TextInputStyle.Short, max: 100 }
     ]
   },
   part2: {
     title: "02 — Ervaring",
     emoji: "🎮",
     questions: [
-      { id: "rp_ervaring", label: "Ervaring met Serious RP", placeholder: "Vertel over je ervaring", style: TextInputStyle.Paragraph, max: 500 },
-      { id: "gang_ervaring", label: "Eerdere gangervaring", placeholder: "Vertel over je ervaring", style: TextInputStyle.Paragraph, max: 500 },
-      { id: "activiteit", label: "Activiteit per dag", placeholder: "Bijv. 4 uur", style: TextInputStyle.Short, max: 50 }
+      { id: "rp_ervaring", label: "Ervaring met FiveM/Serious RP", placeholder: "Vertel kort over je ervaring", style: TextInputStyle.Paragraph, max: 300 },
+      { id: "activiteit", label: "Hoeveel uur per dag actief?", placeholder: "Bijv. 4 uur", style: TextInputStyle.Short, max: 50 }
     ]
   },
   part3: {
-    title: "03 — Character",
+    title: "03 — Motivatie",
     emoji: "💼",
     questions: [
-      { id: "waarde", label: "Totale waarde van je character", placeholder: "Bijv. €500.000", style: TextInputStyle.Short, max: 50 },
-      { id: "waarom", label: "Waarom wil je bij Kurokai?", placeholder: "Leg uit...", style: TextInputStyle.Paragraph, max: 500 },
-      { id: "toevoegen", label: "Wat kun jij toevoegen aan Kurokai?", placeholder: "Leg uit...", style: TextInputStyle.Paragraph, max: 500 },
-      { id: "waarom_jou", label: "Waarom moeten wij jou aannemen?", placeholder: "Overtuig ons...", style: TextInputStyle.Paragraph, max: 500 }
-    ]
-  },
-  part4: {
-    title: "04 — Akkoord",
-    emoji: "📜",
-    questions: [
-      { id: "serverregels", label: "Ben je bekend met de serverregels?", placeholder: "Ja of Nee", style: TextInputStyle.Short, max: 10 },
-      { id: "regels_hiërarchie", label: "Bereid aan regels/hiërarchie te houden?", placeholder: "Ja of Nee", style: TextInputStyle.Short, max: 10 }
+      { id: "waarom", label: "Waarom wil je bij Kurokai?", placeholder: "Leg kort uit...", style: TextInputStyle.Paragraph, max: 300 },
+      { id: "toevoegen", label: "Wat kun jij toevoegen?", placeholder: "Leg kort uit...", style: TextInputStyle.Paragraph, max: 300 },
+      { id: "serverregels", label: "Ben je bekend met de serverregels?", placeholder: "Ja of Nee", style: TextInputStyle.Short, max: 10 }
     ]
   }
 };
@@ -331,12 +321,30 @@ async function sendWelcomeMessage(member) {
       .setTitle("👋 WELKOM!")
       .setDescription(`Welkom ${memberLink(member.id, member.displayName)} in de **Kurokai** Discord server!`)
       .addFields(
-        { name: "📊 Totaal leden", value: `${memberCount}`, inline: true },
+        { name: "📊 Totaal aantal leden", value: `${memberCount}`, inline: true },
         { name: "📅 Datum", value: getCurrentDate(), inline: true }
       )
       .setColor(0xFFFFFF).setFooter({ text: FOOTER_TEXT }).setTimestamp().setThumbnail(userAvatar);
     await channel.send({ embeds: [embed] });
   } catch (error) { console.error("Welcome message error:", error); }
+}
+
+async function sendLeaveMessage(member) {
+  try {
+    const channel = await client.channels.fetch(LEAVE_CHANNEL_ID);
+    if (!channel || !channel.isTextBased()) return;
+    const userAvatar = member.user?.avatarURL() || member.displayAvatarURL() || PLACEHOLDER_IMAGE;
+    const memberCount = member.guild.memberCount;
+    const embed = new EmbedBuilder()
+      .setTitle("👋 TOT ZIENS!")
+      .setDescription(`**${member.displayName}** heeft de **Kurokai** Discord server verlaten.`)
+      .addFields(
+        { name: "📊 Totaal aantal leden", value: `${memberCount}`, inline: true },
+        { name: "📅 Datum", value: getCurrentDate(), inline: true }
+      )
+      .setColor(0x2b2b2b).setFooter({ text: FOOTER_TEXT }).setTimestamp().setThumbnail(userAvatar);
+    await channel.send({ embeds: [embed] });
+  } catch (error) { console.error("Leave message error:", error); }
 }
 
 async function sendPromoEmbed(guild, user, oldRank, newRank, reason) {
@@ -466,10 +474,9 @@ async function sendSollicitatieFormulier(interaction) {
     )
     .setColor(0x8B0000).setThumbnail(getServerIcon(guild))
     .addFields(
-      { name: "**01 — Persoonlijke gegevens**", value: "> **Naam:**\n> **Leeftijd:**\n> **Discord:**\n> **IC-naam:**\n> **IC-leeftijd:**", inline: false },
-      { name: "**02 — Ervaring**", value: "> **Ervaring met Serious RP:**\n> **Eerdere gangervaring:**\n> **Activiteit per dag:**", inline: false },
-      { name: "**03 — Character**", value: "> **Totale waarde van je character:**\n> **Waarom wil je bij Kurokai?**\n> **Wat kun jij toevoegen aan Kurokai?**\n> **Waarom moeten wij jou aannemen?**", inline: false },
-      { name: "**04 — Akkoord**", value: "> **Ben je bekend met de serverregels?**\n> **Ben je bereid je aan de regels en hiërarchie van Kurokai te houden?**", inline: false }
+      { name: "**01 — Wie ben je?**", value: "> **Naam:**\n> **Leeftijd:**\n> **Discord:**\n> **IC-naam:**", inline: false },
+      { name: "**02 — Ervaring**", value: "> **Ervaring met FiveM/Serious RP:**\n> **Hoeveel uur per dag actief?**", inline: false },
+      { name: "**03 — Motivatie**", value: "> **Waarom wil je bij Kurokai?**\n> **Wat kun jij toevoegen?**\n> **Ben je bekend met de serverregels?**", inline: false }
     )
     .setFooter({ text: FOOTER_TEXT, iconURL: getServerIcon(guild) })
     .setTimestamp();
@@ -733,24 +740,23 @@ function buildApplicationStartEmbed() {
     .setColor(0xf39c12)
     .setDescription(
       'Welkom bij je sollicitatie voor **Kurokai**!\n\n' +
-      'Vul de 4 kopjes in door op de knoppen hieronder te klikken.\n\n' +
-      '👤 **Deel 1** — Persoonlijke gegevens\n' +
+      'Vul de 3 delen in door op de knoppen hieronder te klikken.\n\n' +
+      '👤 **Deel 1** — Wie ben je?\n' +
       '🎮 **Deel 2** — Ervaring\n' +
-      '💼 **Deel 3** — Character\n' +
-      '📜 **Deel 4** — Akkoord\n\n' +
-      'Zodra je alle 4 de delen hebt ingevuld, wordt je sollicitatie automatisch naar de staff gestuurd!'
+      '💼 **Deel 3** — Motivatie\n\n' +
+      'Zodra je alle 3 de delen hebt ingevuld, wordt je sollicitatie automatisch naar de staff gestuurd!'
     )
     .setFooter({ text: FOOTER_TEXT })
     .setTimestamp();
 }
 
 function buildApplicationButtons(channelId) {
-  const data = activeApplications.get(channelId) || { part1: false, part2: false, part3: false, part4: false };
+  const data = activeApplications.get(channelId) || { part1: false, part2: false, part3: false };
   
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(`app_part1_${channelId}`)
-      .setLabel('Deel 1: Gegevens')
+      .setLabel('Deel 1: Wie ben je?')
       .setEmoji(data.part1 ? '✅' : '👤')
       .setStyle(data.part1 ? ButtonStyle.Success : ButtonStyle.Secondary),
     new ButtonBuilder()
@@ -760,14 +766,9 @@ function buildApplicationButtons(channelId) {
       .setStyle(data.part2 ? ButtonStyle.Success : ButtonStyle.Secondary),
     new ButtonBuilder()
       .setCustomId(`app_part3_${channelId}`)
-      .setLabel('Deel 3: Character')
+      .setLabel('Deel 3: Motivatie')
       .setEmoji(data.part3 ? '✅' : '💼')
-      .setStyle(data.part3 ? ButtonStyle.Success : ButtonStyle.Secondary),
-    new ButtonBuilder()
-      .setCustomId(`app_part4_${channelId}`)
-      .setLabel('Deel 4: Akkoord')
-      .setEmoji(data.part4 ? '✅' : '📜')
-      .setStyle(data.part4 ? ButtonStyle.Success : ButtonStyle.Secondary)
+      .setStyle(data.part3 ? ButtonStyle.Success : ButtonStyle.Secondary)
   );
 }
 
@@ -792,17 +793,15 @@ function buildFinalApplicationEmbed(userId, answers) {
   const p1 = answers.part1 || {};
   const p2 = answers.part2 || {};
   const p3 = answers.part3 || {};
-  const p4 = answers.part4 || {};
 
   return new EmbedBuilder()
     .setTitle('📝 Sollicitatie Ingevuld')
     .setColor(0xf39c12)
     .setDescription(`<@${userId}> heeft de sollicitatie volledig ingevuld.`)
     .addFields(
-      { name: '👤 01 — Persoonlijke gegevens', value: `**Naam:** ${p1.naam || '-'}\n**Leeftijd:** ${p1.leeftijd || '-'}\n**Discord:** ${p1.discord || '-'}\n**IC Naam:** ${p1.ic_naam || '-'}\n**IC Leeftijd:** ${p1.ic_leeftijd || '-'}`, inline: false },
-      { name: '🎮 02 — Ervaring', value: `**Serious RP:** ${p2.rp_ervaring || '-'}\n**Gang Ervaring:** ${p2.gang_ervaring || '-'}\n**Activiteit:** ${p2.activiteit || '-'}`, inline: false },
-      { name: '💼 03 — Character', value: `**Waarde:** ${p3.waarde || '-'}\n**Waarom Kurokai:** ${p3.waarom || '-'}\n**Toevoeging:** ${p3.toevoegen || '-'}\n**Waarom aannemen:** ${p3.waarom_jou || '-'}`, inline: false },
-      { name: '📜 04 — Akkoord', value: `**Bekend met regels:** ${p4.serverregels || '-'}\n**Akkoord hiërarchie:** ${p4.regels_hiërarchie || '-'}`, inline: false }
+      { name: '👤 01 — Wie ben je?', value: `**Naam:** ${p1.naam || '-'}\n**Leeftijd:** ${p1.leeftijd || '-'}\n**Discord:** ${p1.discord || '-'}\n**IC Naam:** ${p1.ic_naam || '-'}`, inline: false },
+      { name: '🎮 02 — Ervaring', value: `**FiveM/Serious RP:** ${p2.rp_ervaring || '-'}\n**Activiteit:** ${p2.activiteit || '-'}`, inline: false },
+      { name: '💼 03 — Motivatie', value: `**Waarom Kurokai:** ${p3.waarom || '-'}\n**Toevoeging:** ${p3.toevoegen || '-'}\n**Bekend met regels:** ${p3.serverregels || '-'}`, inline: false }
     )
     .setFooter({ text: FOOTER_TEXT })
     .setTimestamp();
@@ -1045,7 +1044,6 @@ async function handleAfwezigheid(interaction) {
   const fromDate = interaction.options.getString("from");
   const tilDate = interaction.options.getString("til");
   
-  // Geen isValidDate check meer, accepteert alle tekst
   await sendAfwezigheidEmbed(interaction.member, reason, fromDate, tilDate);
   await interaction.editReply({ content: `✅ Afwezigheid gemeld!` });
 }
@@ -1176,7 +1174,7 @@ async function handleTicketCategorySelect(interaction) {
 
     if (cat.isApplication) {
       activeApplications.set(ticketChannel.id, { 
-        part1: false, part2: false, part3: false, part4: false, 
+        part1: false, part2: false, part3: false, 
         answers: {} 
       });
       
@@ -1243,7 +1241,7 @@ async function handleApplicationModalSubmit(interaction, partKey) {
 
   await interaction.editReply({ content: `✅ **${part.title}** opgeslagen!` });
 
-  if (data.part1 && data.part2 && data.part3 && data.part4) {
+  if (data.part1 && data.part2 && data.part3) {
     const finalEmbed = buildFinalApplicationEmbed(data.userId, answers);
     const adminButtons = buildAdminReviewButtons(channelId, data.userId);
     
@@ -1426,12 +1424,18 @@ client.once("ready", async () => {
   await registerCommands();
   await safeUpdateList();
   await setupTicketPanel();
-  await setupCommandsEmbed(); // Plaatst commands overzicht in het nieuwe kanaal
+  await setupCommandsEmbed();
   
   startStatusInterval();
 });
 
 client.on("guildMemberAdd", async (member) => { await sendWelcomeMessage(member); });
+
+client.on("guildMemberRemove", async (member) => {
+  await sendLeaveMessage(member);
+  const hasGangRole = [...member.roles.cache.keys()].some(id => watchedRoleIds.has(id));
+  if (hasGangRole) scheduleUpdate();
+});
 
 client.on("guildMemberUpdate", async (oldMember, newMember) => {
   const hadLid = oldMember.roles.cache.has(LID_ROLE_ID);
@@ -1446,11 +1450,6 @@ client.on("guildMemberUpdate", async (oldMember, newMember) => {
   let touchesGangRole = false;
   for (const id of watchedRoleIds) if (oldRoles.has(id) !== newRoles.has(id)) { touchesGangRole = true; break; }
   if (touchesGangRole) scheduleUpdate();
-});
-
-client.on("guildMemberRemove", (member) => {
-  const hasGangRole = [...member.roles.cache.keys()].some(id => watchedRoleIds.has(id));
-  if (hasGangRole) scheduleUpdate();
 });
 
 client.on("interactionCreate", async (interaction) => {
