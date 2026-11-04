@@ -138,16 +138,27 @@ const PLACEHOLDER_IMAGE = "https://cdn.discordapp.com/attachments/15657408320600
 const FOOTER_TEXT = "Kurokai • Arnhem Roleplay";
 
 const ranks = [
-  { name: "Founder", roleId: "1565748939821547652", level: 10, emoji: "👑" },
-  { name: "Boss", roleId: "1565750203259031593", level: 9, emoji: "🖤" },
-  { name: "Rechterhand", roleId: "1565748940702220338", level: 8, emoji: "🤝" },
-  { name: "Underboss", roleId: "1565748941671112875", level: 7, emoji: "🎩" },
-  { name: "Head Hitman", roleId: "1565748942900035685", level: 6, emoji: "🎯" },
-  { name: "Hitman", roleId: "1565750620298936391", level: 5, emoji: "⚔️" },
-  { name: "Jr Hitman", roleId: "1565750676955340861", level: 4, emoji: "🗡️" },
-  { name: "Full Member", roleId: "1565748945643249734", level: 3, emoji: "💎" },
-  { name: "Member", roleId: "1565748946561798155", level: 2, emoji: "🔗" },
-  { name: "Hang Around", roleId: "1565748943894225100", level: 1, emoji: "🚬" },
+  { name: "El Patrón", roleId: "1565818928893132840", level: 21, emoji: "👑" },
+  { name: "Mede Founder", roleId: "1565808108192931940", level: 20, emoji: "🖤" },
+  { name: "Rechterhand", roleId: "1565807789757169825", level: 19, emoji: "🤝" },
+  { name: "Linkerhand", roleId: "1565807696878239825", level: 18, emoji: "🫱" },
+  { name: "Boss", roleId: "1565807978295328870", level: 17, emoji: "🎩" },
+  { name: "Underboss", roleId: "1565807890168676382", level: 16, emoji: "⚔️" },
+  { name: "Leermeester", roleId: "1565807494255743099", level: 15, emoji: "📜" },
+  { name: "Meester", roleId: "1565806781656211547", level: 14, emoji: "💎" },
+  { name: "Shogun", roleId: "1565806660365328525", level: 13, emoji: "🏯" },
+  { name: "Samurai-generaal", roleId: "1565805893080195093", level: 12, emoji: "🎖️" },
+  { name: "Samurai", roleId: "1565805554524225576", level: 11, emoji: "🗡️" },
+  { name: "Bandiet", roleId: "1565805299527323752", level: 10, emoji: "🦹" },
+  { name: "Head Hitman", roleId: "1565805190328885419", level: 9, emoji: "🎯" },
+  { name: "Hitman", roleId: "1565805050192732171", level: 8, emoji: "🔫" },
+  { name: "Junior Hitman", roleId: "1565804787851862066", level: 7, emoji: "🔪" },
+  { name: "Straatsoldaat", roleId: "1565804652019187782", level: 6, emoji: "🪖" },
+  { name: "Ninja", roleId: "1565804525867237536", level: 5, emoji: "🥷" },
+  { name: "Novato", roleId: "1565804432581730344", level: 4, emoji: "🌱" },
+  { name: "Runner", roleId: "1565804342303531068", level: 3, emoji: "🏃" },
+  { name: "Leerling", roleId: "1565804121775144991", level: 2, emoji: "📚" },
+  { name: "Proeftijd", roleId: "1565821041547411516", level: 1, emoji: "⏳" },
 ];
 
 const sortedRanks = [...ranks].sort((a, b) => b.level - a.level);
